@@ -20,8 +20,6 @@ done
 /bin/ip route del 128.0.0.0/1 via ${route_vpn_gateway}
 /bin/ip route del 0.0.0.0/1 via ${route_vpn_gateway}
 
-echo route_vpn_gateway: ${route_vpn_gateway} dev: ${dev}  > /tmp/daniel
-
 # Add routes to the vpn routing table
 echo ip rule add from $ifconfig_local lookup vpn
 /bin/ip rule add from ${ifconfig_local} lookup vpn
@@ -30,8 +28,5 @@ echo ip rule add from $ifconfig_local lookup vpn
 echo ip route add default dev ${dev} table vpn
 /bin/ip route add default dev ${dev} table vpn
 
-# Restart Transmission to load new tunnel local IP
-#/etc/rc.d/rc.transmission restart
-
+#/etc/openvpn/transmission-helper.sh &
 exit 0
-

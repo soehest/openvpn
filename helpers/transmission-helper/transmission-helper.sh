@@ -1,37 +1,25 @@
 #!/bin/bash
-#Version 0.0.1
+#Version 0.0.2 (11-07-2017)
 DATE=`date +%H:%M:%S`
-INTERFACE="tun0"
-USERNAME="PUTUSERNAMEHERE"
-PASSWORD="PUTPASSWORDHERE"
-PORTFORWARDING="yes"
-LOGGING="true"
+VPNINTERFACE="tun0"
+PORTFORWARDING="YES" # Enable Private Internet Access (PIA) port forwarding
+BINDIP="YES" # Enable transmission bind ip : [YES/NO]
+LOGGING="YES" # Enable Logging : [YES/NO]
 LOGFILE="/tmp/transmission-helper.log"
+QUIET="YES" # Enable quiet mode (no output except errors) : [YES/NO]
 CLIENTIDFILE="/tmp/clientid"
 PIDFILE="/var/run/transmission/transmission.pid"
-TRANSMISSIONCONFIG="/var/lib/transmission/config/settings.json"
+TRANSMISSIONCONFIG="/etc/transmission-daemon/settings.json"
 
-usage(){
-  echo "Usage: $0 OPTIONS"
-  echo "Supported modes:"
-  echo "-i (ip mode)"
-  echo "-p (Portforward mode)"
-  echo "-q quiet (no output except errors)"
-  echo "See readme for instructions."
-  exit 1
-}
+sleep 5
 
 output(){
-  if ! [ "$quiet" = "true" ]; then
+  if ! [ "$QUIET" = "YES" ]; then
     echo $*
   fi
-  if [ "$LOGGING" = "true" ]; then
+  if [ "$LOGGING" = "YES" ]; then
     echo "[$(date)]: $*" >> $LOGFILE
   fi
-}
-
-function log {
-  echo "[$(date)]: $*" >> $LOGFILE
 }
 
 writebindip(){
@@ -44,75 +32,50 @@ writepeerport(){
   output "$TRANSMISSIONCONFIG changed."
 }
 
+PARENT_COMMAND=$(ps $PPID | tail -n 1 | awk "{print \$5}")
 
-if [ "$LOGGING" = "true" ]; then
-  log "$0 called with $@"
-fi
-
-while getopts ":ipq" opt; do
-  case $opt in
-    i)
-      ip=true
-    ;;
-    p)
-      portforward=true
-    ;;
-    q)
-      quiet=true
-    ;;
-    \?)
-      echo "Invalid option: -$OPTARG" >&2
-    ;;
-  esac
-done
-
-if [[ -z $ip ]] && [[ -z $portforward ]]; then
-  usage
-  exit 1
-fi
-
-if ! /bin/ifconfig $INTERFACE >>/dev/null 2>&1; then
-  output "interface $INTERFACE not found, exiting"
-  exit 1
-fi
-
-if ! [ -f $TRANSMISSIONCONFIG ]; then
-  output "$TRANSMISSIONCONFIG not found, exiting"
-  exit 1
+if [ "$LOGGING" = "YES" ]; then
+  output "$0 called from $PARENT_COMMAND"
 fi
 
 vpnip=$(ip -f inet -o addr show tun0|cut -d\  -f 7 | cut -d/ -f 1)
-output "$INTERFACE ip: $vpnip"
+output "$VPNINTERFACE IP [$vpnip]"
 if [ -f $PIDFILE ]; then
-  output "Status Transmission: [UP]"
   pid=$(cat $PIDFILE)
-  output "Transmission pid: $pid"
+  output "Status Transmission: [UP] PID ($pid)"
   running=true
 else
   output "Status Transmission: [DOWN]"
 fi
 
-if [ "$ip" = "true" ]; then
+
+if [ "$BINDIP" = "YES" ]; then
   transmissionip=$(sed -n 's/.*"bind-address-ipv4": "\(.*\)",.*/\1/p' $TRANSMISSIONCONFIG)
-  output "bind-ip from $TRANSMISSIONCONFIG: $transmissionip"
+  output "IP from $TRANSMISSIONCONFIG [$transmissionip]"
+  output "IP from openvpn [$vpnip]"
   if ! [ "$vpnip" == "$transmissionip" ]; then
-    output "Ip changed. Writing new ip to $TRANSMISSIONCONFIG"
+    output "IP changed. Writing new ip to $TRANSMISSIONCONFIG"
     writebindip $vpnip
     update=true
   fi
 fi
 
-if [ "$portforward" = "true" ]; then
+if [ "$PORTFORWARDING" = "YES" ]; then
   if [ -f $CLIENTIDFILE ]; then
     client_id=$(cat $CLIENTIDFILE)
   else
-    client_id=`head -n 100 /dev/urandom | md5sum | tr -d " -"`
+    client_id=`head -n 100 /dev/urandom | sha256sum | tr -d " -"`
     echo $client_id > $CLIENTIDFILE
   fi
   transmissionport=$(sed -n 's/.*"peer-port": \(.*\),.*/\1/p' $TRANSMISSIONCONFIG)
-  output "peer-port from $TRANSMISSIONCONFIG: $transmissionport"
-  currentport=`wget --bind-address=$vpnip -q --post-data="user=$USERNAME&pass=$PASSWORD&client_id=$client_id&local_ip=$vpnip" -O - 'https://www.privateinternetaccess.com/vpninfo/port_forward_assignment' | head -1 | grep -oE "[0-9]+"`
-  output "peer-port from https://www.privateinternetaccess.com $currentport"
+  output "peer-port from $TRANSMISSIONCONFIG: ($transmissionport)"
+  #currentport=`wget --bind-address=$vpnip -q -O - "http://209.222.18.222:2000/?client_id=$client_id" | head -1 | grep -oE "[0-9]+"`
+  currentport=`curl -f -s -S --interface $VPNINTERFACE "http://209.222.18.222:2000/?client_id=$client_id" | head -1 | grep -oE "[0-9]+"`
+  if [ -z "$currentport" ]; then
+    output "Unable to get port from Private Internet Access"
+    exit 1
+  fi
+  output "peer-port from https://www.privateinternetaccess.com ($currentport)"
   if ! [ "$currentport" == "$transmissionport" ]; then
     output "Port changed. Writing new port to $TRANSMISSIONCONFIG"
     writepeerport $currentport
